@@ -45,10 +45,11 @@ export const createBooking = async (booking: CreateBookingRequest): Promise<Book
 };
 
 export const checkAvailability = async (params: {
-  room_id: number;
+  room_id: string | number;
   date: string;
   start_time: string;
   end_time: string;
+  participants?: string | number;
 }): Promise<AvailabilityResponse> => {
   const response = await api.get<ApiResponse<AvailabilityResponse>>('/bookings/availability', { params });
   return response.data.data;

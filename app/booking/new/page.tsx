@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, AlertCircle, X, CheckCircle, Clock } from 'lucide-react'
 import { fetchUnits, fetchRooms, fetchConsumptions, createBooking, checkAvailability } from '@/lib/api'
 import { Unit, MeetingRoom, Consumption, CreateBookingRequest } from '@/lib/types'
 
@@ -30,14 +30,44 @@ const bookingSchema = z.object({
 
 type BookingFormData = z.infer<typeof bookingSchema>
 
+interface ValidationError {
+  message: string
+  code: string
+}
+
+interface ApiError {
+  success: false
+  message: string
+  code: string
+  validationErrors?: ValidationError[]
+}
+
+interface AvailabilityResponse {
+  available: boolean
+  validationsPassed: boolean
+  validationErrors?: ValidationError[]
+  workingHours?: any
+}
+
 export default function NewBooking() {
   const router = useRouter()
   const [units, setUnits] = useState<Unit[]>([])
   const [rooms, setRooms] = useState<MeetingRoom[]>([])
   const [consumptions, setConsumptions] = useState<Consumption[]>([])
   const [selectedRoom, setSelectedRoom] = useState<MeetingRoom | null>(null)
-  const [availability, setAvailability] = useState<{ available: boolean; conflicts: any[] } | null>(null)
+  const [availability, setAvailability] = useState<AvailabilityResponse | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [minDate, setMinDate] = useState('')
+  const [mounted, setMounted] = useState(false)
+  const [apiErrors, setApiErrors] = useState<ValidationError[]>([])
+  const [showErrors, setShowErrors] = useState(false)
+  const [checkingAvailability, setCheckingAvailability] = useState(false)
+
+  // Set minimum date only on client side to avoid hydration mismatch
+  useEffect(() => {
+    setMinDate(new Date().toISOString().split('T')[0])
+    setMounted(true)
+  }, [])
 
   const {
     register,
@@ -82,6 +112,48 @@ export default function NewBooking() {
     }
   }, [watchedValues.meeting_room_id, rooms])
 
+  // Check availability when key fields change
+  useEffect(() => {
+    const checkRoomAvailability = async () => {
+      if (
+        watchedValues.meeting_room_id &&
+        watchedValues.meeting_date &&
+        watchedValues.start_time &&
+        watchedValues.end_time &&
+        watchedValues.total_participants
+      ) {
+        try {
+          setCheckingAvailability(true)
+          const availabilityData = await checkAvailability({
+            room_id: watchedValues.meeting_room_id,
+            date: watchedValues.meeting_date,
+            start_time: watchedValues.start_time,
+            end_time: watchedValues.end_time,
+            participants: watchedValues.total_participants,
+          })
+          setAvailability(availabilityData)
+        } catch (error) {
+          console.error('Error checking availability:', error)
+          setAvailability(null)
+        } finally {
+          setCheckingAvailability(false)
+        }
+      } else {
+        setAvailability(null)
+      }
+    }
+
+    // Debounce the availability check
+    const timeoutId = setTimeout(checkRoomAvailability, 800)
+    return () => clearTimeout(timeoutId)
+  }, [
+    watchedValues.meeting_room_id,
+    watchedValues.meeting_date,
+    watchedValues.start_time,
+    watchedValues.end_time,
+    watchedValues.total_participants,
+  ])
+
   const handleConsumptionChange = (consumptionId: number, checked: boolean) => {
     const currentIds = watchedValues.consumption_ids || []
     let newIds
@@ -95,9 +167,41 @@ export default function NewBooking() {
     setValue('consumption_ids', newIds)
   }
 
+  const getErrorTitle = (code: string): string => {
+    const errorTitles: Record<string, string> = {
+      'TIME_CONFLICT': 'Konflik Waktu',
+      'CAPACITY_EXCEEDED': 'Kapasitas Terlampaui',
+      'INVALID_DATE_PAST': 'Tanggal Tidak Valid',
+      'INVALID_WORKING_DAY': 'Hari Tidak Valid',
+      'OUTSIDE_WORKING_HOURS': 'Di Luar Jam Kerja',
+      'INVALID_TIME_FORMAT': 'Format Waktu Salah',
+      'INVALID_TIME_ORDER': 'Urutan Waktu Salah',
+      'INVALID_DURATION_TOO_SHORT': 'Durasi Terlalu Pendek',
+      'INVALID_DURATION_TOO_LONG': 'Durasi Terlalu Panjang',
+      'ROOM_NOT_FOUND': 'Ruangan Tidak Ditemukan',
+      'ROOM_INACTIVE': 'Ruangan Tidak Aktif',
+      'INVALID_PARTICIPANTS_COUNT': 'Jumlah Peserta Tidak Valid',
+    }
+    return errorTitles[code] || 'Error'
+  }
+
+  const getErrorIcon = (code: string): string => {
+    if (code === 'TIME_CONFLICT') return '⏰'
+    if (code === 'CAPACITY_EXCEEDED') return '👥'
+    if (code.includes('DATE') || code.includes('TIME')) return '📅'
+    return '⚠️'
+  }
+
+  const closeErrors = () => {
+    setApiErrors([])
+    setShowErrors(false)
+  }
+
   const onSubmit = async (data: BookingFormData) => {
     try {
       setIsSubmitting(true)
+      setApiErrors([])
+      setShowErrors(false)
 
       const bookingData: CreateBookingRequest = {
         unit_id: parseInt(data.unit_id),
@@ -112,11 +216,37 @@ export default function NewBooking() {
       }
 
       await createBooking(bookingData)
-      alert('Booking berhasil dibuat!')
+
+      // Show success message
+      setApiErrors([])
+      alert('✅ Booking berhasil dibuat!')
       router.push('/booking')
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating booking:', error)
-      alert('Error membuat booking. Silakan coba lagi.')
+
+      // Parse API error response
+      if (error.response?.data) {
+        const apiError: ApiError = error.response.data
+
+        // Set validation errors from API
+        if (apiError.validationErrors && apiError.validationErrors.length > 0) {
+          setApiErrors(apiError.validationErrors)
+        } else {
+          // Fallback to main error message
+          setApiErrors([{
+            message: apiError.message || 'Terjadi kesalahan saat membuat booking',
+            code: apiError.code || 'UNKNOWN_ERROR'
+          }])
+        }
+        setShowErrors(true)
+      } else {
+        // Network or other errors
+        setApiErrors([{
+          message: 'Terjadi kesalahan koneksi. Silakan coba lagi.',
+          code: 'NETWORK_ERROR'
+        }])
+        setShowErrors(true)
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -142,6 +272,94 @@ export default function NewBooking() {
       </div>
 
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
+        {/* Error Display */}
+        {showErrors && apiErrors.length > 0 && (
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+            <div className="flex items-start justify-between">
+              <div className="flex items-start space-x-3">
+                <AlertCircle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="text-sm font-medium text-red-800 mb-2">
+                    Booking tidak dapat diproses
+                  </h3>
+                  <div className="space-y-2">
+                    {apiErrors.map((error, index) => (
+                      <div key={index} className="flex items-start space-x-2">
+                        <span className="text-sm">{getErrorIcon(error.code)}</span>
+                        <div>
+                          <p className="text-sm font-medium text-red-800">
+                            {getErrorTitle(error.code)}
+                          </p>
+                          <p className="text-sm text-red-700">
+                            {error.message}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={closeErrors}
+                className="text-red-400 hover:text-red-600 transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Availability Status */}
+        {availability && (
+          <div className={`mb-6 rounded-lg p-4 border ${
+            availability.validationsPassed && availability.available
+              ? 'bg-green-50 border-green-200'
+              : 'bg-yellow-50 border-yellow-200'
+          }`}>
+            <div className="flex items-start space-x-3">
+              {availability.validationsPassed && availability.available ? (
+                <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0" />
+              ) : (
+                <AlertCircle className="h-5 w-5 text-yellow-500 mt-0.5 flex-shrink-0" />
+              )}
+              <div className="flex-1">
+                <h3 className={`text-sm font-medium mb-1 ${
+                  availability.validationsPassed && availability.available
+                    ? 'text-green-800'
+                    : 'text-yellow-800'
+                }`}>
+                  {availability.validationsPassed && availability.available
+                    ? '✅ Ruangan tersedia'
+                    : '⚠️ Ada masalah dengan pemesanan'
+                  }
+                </h3>
+                {availability.validationErrors && availability.validationErrors.length > 0 && (
+                  <div className="space-y-1">
+                    {availability.validationErrors.map((error, index) => (
+                      <div key={index} className="flex items-start space-x-2">
+                        <span className="text-sm">{getErrorIcon(error.code)}</span>
+                        <p className="text-sm text-yellow-700">
+                          {error.message}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Checking Availability */}
+        {checkingAvailability && (
+          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center space-x-3">
+              <Clock className="h-5 w-5 text-blue-500 animate-spin" />
+              <p className="text-sm text-blue-700">Mengecek ketersediaan ruangan...</p>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           {/* Informasi Ruang Meeting */}
           <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
@@ -226,7 +444,7 @@ export default function NewBooking() {
                 <input
                   type="date"
                   {...register('meeting_date')}
-                  min={new Date().toISOString().split('T')[0]}
+                  min={mounted ? minDate : undefined}
                   className="w-full px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:border-transparent bg-white text-sm"
                   style={{
                     '--tw-ring-color': '#4A8394',
@@ -367,7 +585,7 @@ export default function NewBooking() {
               </button>
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || (availability && !availability.available)}
                 className="px-8 py-3 text-sm font-medium text-white rounded-md hover:opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ backgroundColor: '#4A8394' }}
               >

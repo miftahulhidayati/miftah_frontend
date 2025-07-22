@@ -68,7 +68,7 @@ export function Header() {
               {/* User Image Placeholder */}
               <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center overflow-hidden">
                 <img
-                  src="/api/placeholder/32/32"
+                  src="/image.svg"
                   alt="User Avatar"
                   className="w-full h-full object-cover"
                   onError={handleImageError}

@@ -10,6 +10,14 @@ export default function Dashboard() {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [rooms, setRooms] = useState<MeetingRoom[]>([])
   const [loading, setLoading] = useState(true)
+  const [todayDate, setTodayDate] = useState<string>('')
+  const [mounted, setMounted] = useState(false)
+
+  // Set today's date only on client side to avoid hydration mismatch
+  useEffect(() => {
+    setTodayDate(new Date().toISOString().split('T')[0])
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     const loadData = async () => {
@@ -30,14 +38,25 @@ export default function Dashboard() {
     loadData()
   }, [])
 
-  const todayBookings = bookings.filter(
-    booking => booking.meeting_date === new Date().toISOString().split('T')[0]
-  )
+  // Calculate today's bookings only after component is mounted
+  const todayBookings = mounted && todayDate ? bookings.filter(
+    booking => booking.meeting_date === todayDate
+  ) : []
 
   const totalParticipants = bookings.reduce(
     (sum, booking) => sum + booking.total_participants,
     0
   )
+
+  // Format date safely for display
+  const formatDate = (dateString: string) => {
+    if (!mounted) return dateString // Return raw string during SSR
+    try {
+      return new Date(dateString).toLocaleDateString('id-ID')
+    } catch {
+      return dateString
+    }
+  }
 
   if (loading) {
     return (
@@ -172,7 +191,7 @@ export default function Dashboard() {
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-medium text-gray-900">
-                          {new Date(booking.meeting_date).toLocaleDateString('id-ID')}
+                          {formatDate(booking.meeting_date)}
                         </p>
                         <p className="text-sm text-gray-500">
                           {booking.start_time.substring(0, 5)} - {booking.end_time.substring(0, 5)}

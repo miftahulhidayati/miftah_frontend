@@ -11,12 +11,18 @@ export default function BookingList() {
   const [units, setUnits] = useState<Unit[]>([])
   const [rooms, setRooms] = useState<MeetingRoom[]>([])
   const [loading, setLoading] = useState(true)
+  const [mounted, setMounted] = useState(false)
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 10,
     total: 0,
     totalPages: 0,
   })
+
+  // Set mounted flag to avoid hydration mismatch
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const loadBookings = async () => {
     try {
@@ -63,6 +69,20 @@ export default function BookingList() {
 
   const handlePageChange = (newPage: number) => {
     setPagination(prev => ({ ...prev, page: newPage }))
+  }
+
+  // Format date safely for display
+  const formatDate = (dateString: string) => {
+    if (!mounted) return dateString // Return raw string during SSR
+    try {
+      return new Date(dateString).toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric'
+      })
+    } catch {
+      return dateString
+    }
   }
 
   const generatePageNumbers = () => {
@@ -175,11 +195,7 @@ export default function BookingList() {
                           {booking.meeting_room.capacity} Orang
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {new Date(booking.meeting_date).toLocaleDateString('id-ID', {
-                            day: '2-digit',
-                            month: 'long',
-                            year: 'numeric'
-                          })}
+                          {formatDate(booking.meeting_date)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {booking.start_time.substring(0, 5)} s/d {booking.end_time.substring(0, 5)}

@@ -9,12 +9,12 @@ export interface ApiError {
   success: false;
   message: string;
   code: string;
-  errors?: ValidationError[];
+  validationErrors?: ValidationError[];
 }
 
 export interface ValidationError {
-  field: string;
   message: string;
+  code: string;
 }
 
 // Master Data Types
@@ -85,5 +85,11 @@ export interface BookingListResponse {
 
 export interface AvailabilityResponse {
   available: boolean;
-  conflicts: Booking[];
+  validationsPassed: boolean;
+  validationErrors?: ValidationError[];
+  workingHours?: {
+    START: string;
+    END: string;
+    WORKING_DAYS: number[];
+  };
 }
